@@ -81,6 +81,19 @@ static const __u8 huion_tablet_rdesc_template[] = {
 	HUION_PH(PRESSURE_LM),  /*          Logical Maximum (PLACEHOLDER),  */
 	0x81, 0x02,             /*          Input (Variable),               */
 	0xC0,                   /*      End Collection,                     */
+	0xC0,                   /*  End Collection,                         */
+	0x05, 0x01,             /*  Usage Page (Desktop),                   */
+	0x09, 0x06,             /*  Usage (Keyboard),                       */
+	0xA1, 0x01,             /*  Collection (Application),               */
+	0x85, 0xF7,             /*      Report ID (247),                    */
+	0x05, 0x09,             /*      Usage Page (Button),                */
+	0x75, 0x01,             /*      Report Size (1),                    */
+	0x95, 0x18,             /*      Report Count (24),                  */
+	0x81, 0x03,             /*      Input (Constant, Variable),         */
+	0x19, 0x01,             /*      Usage Minimum (01h),                */
+	0x29, 0x08,             /*      Usage Maximum (08h),                */
+	0x95, 0x08,             /*      Report Count (8),                   */
+	0x81, 0x02,             /*      Input (Variable),                   */
 	0xC0                    /*  End Collection                          */
 };
 
@@ -120,8 +133,9 @@ static int huion_tablet_enable(struct hid_device *hdev)
 	int rc;
 	struct usb_device *usb_dev = hid_to_usb_dev(hdev);
 	struct huion_drvdata *drvdata = hid_get_drvdata(hdev);
-	__le16 *buf = NULL;
-	size_t len;
+	char str_buf[16];
+	__le16 *prm_buf = NULL;
+	size_t prm_len;
 	s32 params[HUION_PH_ID_NUM];
 	s32 resolution;
 	__u8 *p;
@@ -133,9 +147,9 @@ static int huion_tablet_enable(struct hid_device *hdev)
 	 * driver traffic.
 	 * NOTE: This enables fully-functional tablet mode.
 	 */
-	len = HUION_PRM_NUM * sizeof(*buf);
-	buf = kmalloc(len, GFP_KERNEL);
-	if (buf == NULL) {
+	prm_len = HUION_PRM_NUM * sizeof(*prm_buf);
+	prm_buf = kmalloc(prm_len, GFP_KERNEL);
+	if (prm_buf == NULL) {
 		hid_err(hdev, "failed to allocate parameter buffer\n");
 		rc = -ENOMEM;
 		goto cleanup;
@@ -143,7 +157,7 @@ static int huion_tablet_enable(struct hid_device *hdev)
 	rc = usb_control_msg(usb_dev, usb_rcvctrlpipe(usb_dev, 0),
 				USB_REQ_GET_DESCRIPTOR, USB_DIR_IN,
 				(USB_DT_STRING << 8) + 0x64,
-				0x0409, buf, len,
+				0x0409, prm_buf, prm_len,
 				USB_CTRL_GET_TIMEOUT);
 	if (rc == -EPIPE) {
 		hid_err(hdev, "device parameters not found\n");
@@ -153,18 +167,26 @@ static int huion_tablet_enable(struct hid_device *hdev)
 		hid_err(hdev, "failed to get device parameters: %d\n", rc);
 		rc = -ENODEV;
 		goto cleanup;
-	} else if (rc != len) {
+	} else if (rc != prm_len) {
 		hid_err(hdev, "invalid device parameters\n");
 		rc = -ENODEV;
 		goto cleanup;
 	}
 
+	/* Enable abstract keyboard mode */
+	rc = usb_string(hid_to_usb_dev(hdev), 0x7b, str_buf, sizeof(str_buf));
+	if (rc < 0) {
+		hid_err(hdev, "failed to enable abstract keyboard: %d\n", rc);
+		rc = -ENODEV;
+		goto cleanup;
+	}
+
 	/* Extract device parameters */
-	params[HUION_PH_ID_X_LM] = le16_to_cpu(buf[HUION_PRM_X_LM]);
-	params[HUION_PH_ID_Y_LM] = le16_to_cpu(buf[HUION_PRM_Y_LM]);
+	params[HUION_PH_ID_X_LM] = le16_to_cpu(prm_buf[HUION_PRM_X_LM]);
+	params[HUION_PH_ID_Y_LM] = le16_to_cpu(prm_buf[HUION_PRM_Y_LM]);
 	params[HUION_PH_ID_PRESSURE_LM] =
-		le16_to_cpu(buf[HUION_PRM_PRESSURE_LM]);
-	resolution = le16_to_cpu(buf[HUION_PRM_RESOLUTION]);
+		le16_to_cpu(prm_buf[HUION_PRM_PRESSURE_LM]);
+	resolution = le16_to_cpu(prm_buf[HUION_PRM_RESOLUTION]);
 	if (resolution == 0) {
 		params[HUION_PH_ID_X_PM] = 0;
 		params[HUION_PH_ID_Y_PM] = 0;
@@ -204,7 +226,7 @@ static int huion_tablet_enable(struct hid_device *hdev)
 	rc = 0;
 
 cleanup:
-	kfree(buf);
+	kfree(prm_buf);
 	return rc;
 }
 
@@ -213,6 +235,10 @@ static int huion_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	int rc;
 	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
 	struct huion_drvdata *drvdata;
+
+	/* Ignore all interfaces except #0 as they are not used */
+	if (intf->cur_altsetting->desc.bInterfaceNumber != 0x00)
+		return -ENODEV;
 
 	/* Allocate and assign driver data */
 	drvdata = devm_kzalloc(&hdev->dev, sizeof(*drvdata), GFP_KERNEL);
@@ -256,13 +282,20 @@ static int huion_raw_event(struct hid_device *hdev, struct hid_report *report,
 {
 	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
 
-	/* If this is a pen input report */
+	/* If this is a pen/frame button input report */
 	if (intf->cur_altsetting->desc.bInterfaceNumber == 0 &&
 	    report->type == HID_INPUT_REPORT &&
-	    report->id == 0x07 && size >= 2)
-		/* Invert the in-range bit */
-		data[1] ^= 0x40;
-
+	    report->id == 0x07 && size >= 2) {
+		/* If this is a frame button report */
+		if (data[1] == 0xe0) {
+			/* Change to virtual frame button report ID */
+			data[0] = 0xf7;
+		/* Else, this is a pen report */
+		} else {
+			/* Invert the in-range bit */
+			data[1] ^= 0x40;
+		}
+	}
 	return 0;
 }
 
