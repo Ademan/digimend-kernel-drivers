@@ -225,6 +225,7 @@ static int huion_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	switch (id->product) {
 	case USB_DEVICE_ID_HUION_TABLET:
 	case USB_DEVICE_ID_YIYNOVA_TABLET:
+	case USB_DEVICE_ID_UCLOGIC_TABLET_TWHA60:
 		/* If this is the pen interface */
 		if (intf->cur_altsetting->desc.bInterfaceNumber == 0) {
 			rc = huion_tablet_enable(hdev);
