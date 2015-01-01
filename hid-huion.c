@@ -176,8 +176,7 @@ static int huion_tablet_enable(struct hid_device *hdev)
 	}
 
 	/* Allocate fixed report descriptor */
-	drvdata->rdesc = devm_kzalloc(&hdev->dev,
-				sizeof(huion_tablet_rdesc_template),
+	drvdata->rdesc = kzalloc(sizeof(huion_tablet_rdesc_template),
 				GFP_KERNEL);
 	if (drvdata->rdesc == NULL) {
 		hid_err(hdev, "failed to allocate fixed rdesc\n");
@@ -215,7 +214,7 @@ static int huion_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct huion_drvdata *drvdata;
 
 	/* Allocate and assign driver data */
-	drvdata = devm_kzalloc(&hdev->dev, sizeof(*drvdata), GFP_KERNEL);
+	drvdata = kzalloc(sizeof(*drvdata), GFP_KERNEL);
 	if (drvdata == NULL) {
 		hid_err(hdev, "failed to allocate driver data\n");
 		return -ENOMEM;
@@ -266,6 +265,20 @@ static int huion_raw_event(struct hid_device *hdev, struct hid_report *report,
 	return 0;
 }
 
+static void huion_remove(struct hid_device * hdev) {
+	struct huion_drvdata *drvdata = hid_get_drvdata(hdev);
+
+	if (drvdata && drvdata->rdesc) {
+		kfree(drvdata->rdesc);
+		drvdata->rdesc = NULL;
+	}
+
+	if (drvdata) {
+		kfree(drvdata);
+		hid_set_drvdata(hdev, NULL);
+	}
+}
+
 static const struct hid_device_id huion_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_HUION, USB_DEVICE_ID_HUION_TABLET) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_UCLOGIC, USB_DEVICE_ID_HUION_TABLET) },
@@ -280,6 +293,7 @@ static struct hid_driver huion_driver = {
 	.probe = huion_probe,
 	.report_fixup = huion_report_fixup,
 	.raw_event = huion_raw_event,
+	.remove = huion_remove
 };
 module_driver(huion_driver, hid_register_driver, hid_unregister_driver);
 
