@@ -838,6 +838,7 @@ static int uclogic_probe(struct hid_device *hdev, const struct hid_device_id *id
 				hid_err(hdev, "tablet enabling failed\n");
 				return rc;
 			}
+			strlcat(hdev->name, " Pen", sizeof(hdev->name));
 		}
 		break;
 	case USB_DEVICE_ID_UCLOGIC_TABLET_TWHA60:
